@@ -1,0 +1,10 @@
+class Icon:
+    CLOUDY_NIGHT = "./icons/cloudynight.png"
+    MOON = "./icons/moon.png"
+    SNOW = "./icons/snow.png"
+    CLOUDY_SUN = "./icons/cloudysun.png"
+    RAIN = "./icons/rain.png"
+    SUN = "./icons/sun.png"
+    FOG = "./icons/fog.png"
+    SLEET = "./icons/sleet.png"
+    WIND = "./icons/wind.png"

@@ -1,279 +1,234 @@
 #!/usr/bin/python
-'''*****************************************************************************************************************
-    Pi Temperature Station
-    By John M. Wargo
-    www.johnwargo.com
+# -*- coding: utf-8 -*-
 
-    This is a Raspberry Pi project that measures weather values (temperature, humidity and pressure) using
-    the Astro Pi Sense HAT then uploads the data to a Weather Underground weather station.
-********************************************************************************************************************'''
+'''
+    Stazione Meteo
+    di Matteo Coppola
 
-from __future__ import print_function
+    Questo progetto utilizza la Raspberry Pi e il Sense HAT per raccogliere dati metereologici
+    (temperatura, presisone, umidità e immagini dalla webcam) da inviare al sito
+    Weather Underground (https://www.wunderground.com)
+'''
 
-import datetime
+import time
+from datetime import datetime, timedelta
 import os
 import sys
-import time
 from urllib import urlencode
+from ftplib import FTP
+from threading import Thread
 
 import urllib2
-from sense_hat import SenseHat
+from sense_hat import SenseHat, ACTION_PRESSED
 
 from config import Config
 
-# ============================================================================
-# Constants
-# ============================================================================
-# specifies how often to measure values from the Sense HAT (in minutes)
-MEASUREMENT_INTERVAL = 10  # minutes
-# Set to False when testing the code and/or hardware
-# Set to True to enable upload of weather data to Weather Underground
-WEATHER_UPLOAD = True
-# the weather underground URL used to upload weather data
-WU_URL = "http://weatherstation.wunderground.com/weatherstation/updateweatherstation.php"
-# some string constants
-SINGLE_HASH = "#"
-HASHES = "########################################"
-SLASH_N = "\n"
 
-# constants used to display an up and down arrows plus bars
-# modified from https://www.raspberrypi.org/learning/getting-started-with-the-sense-hat/worksheet/
-# set up the colours (blue, red, empty)
-b = [0, 0, 255]  # blue
-r = [255, 0, 0]  # red
-e = [0, 0, 0]  # empty
-# create images for up and down arrows
-arrow_up = [
-    e, e, e, r, r, e, e, e,
-    e, e, r, r, r, r, e, e,
-    e, r, e, r, r, e, r, e,
-    r, e, e, r, r, e, e, r,
-    e, e, e, r, r, e, e, e,
-    e, e, e, r, r, e, e, e,
-    e, e, e, r, r, e, e, e,
-    e, e, e, r, r, e, e, e
-]
-arrow_down = [
-    e, e, e, b, b, e, e, e,
-    e, e, e, b, b, e, e, e,
-    e, e, e, b, b, e, e, e,
-    e, e, e, b, b, e, e, e,
-    b, e, e, b, b, e, e, b,
-    e, b, e, b, b, e, b, e,
-    e, e, b, b, b, b, e, e,
-    e, e, e, b, b, e, e, e
-]
-bars = [
-    e, e, e, e, e, e, e, e,
-    e, e, e, e, e, e, e, e,
-    r, r, r, r, r, r, r, r,
-    r, r, r, r, r, r, r, r,
-    b, b, b, b, b, b, b, b,
-    b, b, b, b, b, b, b, b,
-    e, e, e, e, e, e, e, e,
-    e, e, e, e, e, e, e, e
-]
+class WeatherStation(object):
+    '''
+    Modella la stazione metereologica e ne implementa le funzioni principali
+    '''
 
+    # URL Weather Underground usato per caricare i dati
+    WU_URL = "http://weatherstation.wunderground.com/weatherstation/updateweatherstation.php"
 
-def c_to_f(input_temp):
-    # convert input_temp from Celsius to Fahrenheit
-    return (input_temp * 1.8) + 32
+    #Contiene le ultime 3 temperature lette
+    last3_temperatures = []
 
+    # Gli ultimi valori raccolti per temperatura, pressione e umidità
+    temp = None
+    humidity = None
+    pressure = None
 
-def get_cpu_temp():
-    # 'borrowed' from https://www.raspberrypi.org/forums/viewtopic.php?f=104&t=111457
-    # executes a command at the OS to pull in the CPU temperature
-    res = os.popen('vcgencmd measure_temp').readline()
-    return float(res.replace("temp=", "").replace("'C\n", ""))
+    # timestamp
+    latest_data_collection = None
+    latest_data_upload = None
+    latest_picture_upload = None
 
-
-# use moving average to smooth readings
-def get_smooth(x):
-    # do we have the t object?
-    if not hasattr(get_smooth, "t"):
-        # then create it
-        get_smooth.t = [x, x, x]
-    # manage the rolling previous values
-    get_smooth.t[2] = get_smooth.t[1]
-    get_smooth.t[1] = get_smooth.t[0]
-    get_smooth.t[0] = x
-    # average the three last temperatures
-    xs = (get_smooth.t[0] + get_smooth.t[1] + get_smooth.t[2]) / 3
-    return xs
-
-
-def get_temp():
-    # ====================================================================
-    # Unfortunately, getting an accurate temperature reading from the
-    # Sense HAT is improbable, see here:
-    # https://www.raspberrypi.org/forums/viewtopic.php?f=104&t=111457
-    # so we'll have to do some approximation of the actual temp
-    # taking CPU temp into account. The Pi foundation recommended
-    # using the following:
-    # http://yaab-arduino.blogspot.co.uk/2016/08/accurate-temperature-reading-sensehat.html
-    # ====================================================================
-    # First, get temp readings from both sensors
-    t1 = sense.get_temperature_from_humidity()
-    t2 = sense.get_temperature_from_pressure()
-    # t becomes the average of the temperatures from both sensors
-    t = (t1 + t2) / 2
-    # Now, grab the CPU temperature
-    t_cpu = get_cpu_temp()
-    # Calculate the 'real' temperature compensating for CPU heating
-    t_corr = t - ((t_cpu - t) / 1.5)
-    # Finally, average out that value across the last three readings
-    t_corr = get_smooth(t_corr)
-    # convoluted, right?
-    # Return the calculated temperature
-    return t_corr
-
-
-def main():
-    global last_temp
-
-    # initialize the lastMinute variable to the current time to start
-    last_minute = datetime.datetime.now().minute
-    # on startup, just use the previous minute as lastMinute
-    last_minute -= 1
-    if last_minute == 0:
-        last_minute = 59
-
-    # infinite loop to continuously check weather values
-    while 1:
-        # The temp measurement smoothing algorithm's accuracy is based
-        # on frequent measurements, so we'll take measurements every 5 seconds
-        # but only upload on measurement_interval
-        current_second = datetime.datetime.now().second
-        # are we at the top of the minute or at a 5 second interval?
-        if (current_second == 0) or ((current_second % 5) == 0):
-            # ========================================================
-            # read values from the Sense HAT
-            # ========================================================
-            # calculate the temperature
-            calc_temp = get_temp()
-            # now use it for our purposes
-            temp_c = round(calc_temp, 1)
-            temp_f = round(c_to_f(calc_temp), 1)
-            humidity = round(sense.get_humidity(), 0)
-            # convert pressure from millibars to inHg before posting
-            pressure = round(sense.get_pressure() * 0.0295300, 1)
-            print("Temp: %sF (%sC), Pressure: %s inHg, Humidity: %s%%" % (temp_f, temp_c, pressure, humidity))
-
-            # get the current minute
-            current_minute = datetime.datetime.now().minute
-            # is it the same minute as the last time we checked?
-            if current_minute != last_minute:
-                # reset last_minute to the current_minute
-                last_minute = current_minute
-                # is minute zero, or divisible by 10?
-                # we're only going to take measurements every MEASUREMENT_INTERVAL minutes
-                if (current_minute == 0) or ((current_minute % MEASUREMENT_INTERVAL) == 0):
-                    # get the reading timestamp
-                    now = datetime.datetime.now()
-                    print("\n%d minute mark (%d @ %s)" % (MEASUREMENT_INTERVAL, current_minute, str(now)))
-                    # did the temperature go up or down?
-                    if last_temp != temp_f:
-                        if last_temp > temp_f:
-                            # display a blue, down arrow
-                            sense.set_pixels(arrow_down)
-                        else:
-                            # display a red, up arrow
-                            sense.set_pixels(arrow_up)
-                    else:
-                        # temperature stayed the same
-                        # display red and blue bars
-                        sense.set_pixels(bars)
-                    # set last_temp to the current temperature before we measure again
-                    last_temp = temp_f
-
-                    # ========================================================
-                    # Upload the weather data to Weather Underground
-                    # ========================================================
-                    # is weather upload enabled (True)?
-                    if WEATHER_UPLOAD:
-                        # From http://wiki.wunderground.com/index.php/PWS_-_Upload_Protocol
-                        print("Uploading data to Weather Underground")
-                        # build a weather data object
-                        weather_data = {
-                            "action": "updateraw",
-                            "ID": wu_station_id,
-                            "PASSWORD": wu_station_key,
-                            "dateutc": "now",
-                            "tempf": str(temp_f),
-                            "humidity": str(humidity),
-                            "baromin": str(pressure),
-                        }
-                        try:
-                            upload_url = WU_URL + "?" + urlencode(weather_data)
-                            response = urllib2.urlopen(upload_url)
-                            html = response.read()
-                            print("Server response:", html)
-                            # do something
-                            response.close()  # best practice to close the file
-                        except:
-                            print("Exception:", sys.exc_info()[0], SLASH_N)
-                    else:
-                        print("Skipping Weather Underground upload")
-
-        # wait a second then check again
-        # You can always increase the sleep value below to check less often
-        time.sleep(1)  # this should never happen since the above is an infinite loop
-
-    print("Leaving main()")
-
-
-# ============================================================================
-# here's where we start doing stuff
-# ============================================================================
-print(SLASH_N + HASHES)
-print(SINGLE_HASH, "Pi Weather Station                  ", SINGLE_HASH)
-print(SINGLE_HASH, "By John M. Wargo (www.johnwargo.com)", SINGLE_HASH)
-print(HASHES)
-
-# make sure we don't have a MEASUREMENT_INTERVAL > 60
-if (MEASUREMENT_INTERVAL is None) or (MEASUREMENT_INTERVAL > 60):
-    print("The application's 'MEASUREMENT_INTERVAL' cannot be empty or greater than 60")
-    sys.exit(1)
-
-# ============================================================================
-#  Read Weather Underground Configuration Parameters
-# ============================================================================
-print("\nInitializing Weather Underground configuration")
-wu_station_id = Config.STATION_ID
-wu_station_key = Config.STATION_KEY
-if (wu_station_id is None) or (wu_station_key is None):
-    print("Missing values from the Weather Underground configuration file\n")
-    sys.exit(1)
-
-# we made it this far, so it must have worked...
-print("Successfully read Weather Underground configuration values")
-print("Station ID:", wu_station_id)
-# print("Station key:", wu_station_key)
-
-# ============================================================================
-# initialize the Sense HAT object
-# ============================================================================
-try:
-    print("Initializing the Sense HAT client")
     sense = SenseHat()
-    # sense.set_rotation(180)
-    # then write some text to the Sense HAT's 'screen'
-    sense.show_message("Init", text_colour=[255, 255, 0], back_colour=[0, 0, 255])
-    # clear the screen
-    sense.clear()
-    # get the current temp to use when checking the previous measurement
-    last_temp = round(c_to_f(get_temp()), 1)
-    print("Current temperature reading:", last_temp)
-except:
-    print("Unable to initialize the Sense HAT library:", sys.exc_info()[0])
-    sys.exit(1)
 
-print("Initialization complete!")
+    def __init__(self):
+        """
+        Effettua il setup della stazione all'avvio
+        """
+        # Visualizza il messaggio di benvenuto
+        self.sense.show_message(
+            Config.WELCOME_MESSAGE,
+            text_colour=[255, 255, 0],
+            back_colour=[0, 0, 255]
+        )
+        # Gestisce l'input proveniente dal joystick
+        Thread(target=self.joystick_handler).start()
 
-# Now see what we're supposed to do next
+        # Resetta lo schermo
+        self.sense.clear()
+        self.collect_data()
+
+    def joystick_handler(self):
+        """
+        Alla pressione del joystick aumenta la rotazione di 90 gradi
+        """
+        while True:
+            event = self.sense.stick.wait_for_event()
+            if event.action == ACTION_PRESSED:
+                self.sense.rotation = (self.sense.rotation + 90) % 360
+
+    def get_cpu_temp(self):
+        """
+        'Preso in prestito' da https://www.raspberrypi.org/forums/viewtopic.php?f=104&t=111457
+        Chiede al sistema operativo di leggere la temperatura della CPU
+        """
+        res = os.popen('vcgencmd measure_temp').readline()
+        return float(res.replace("temp=", "").replace("'C\n", ""))
+
+    def get_smooth(self, temp):
+        """
+        Calcola la media delle ultime 3 temperature lette
+        """
+        # Se non è stata fatta ancora nessuna lettura
+        if not self.last3_temperatures:
+            # Le ultime tre temperature lette sono uguali e impostate ad temp
+            self.last3_temperatures = [temp, temp, temp]
+        else:
+            self.last3_temperatures.pop(0)
+            self.last3_temperatures.append(temp)
+
+        # Ritorna la media delle ultime 3 temperature lette
+        return sum(self.last3_temperatures) / 3
+
+    def get_temp(self):
+        """
+        Sfortunatamente è improbabile che la temperatura letta dal sense HAT
+        sia corretta, per maggiori informazioni consultare
+        (https://www.raspberrypi.org/forums/viewtopic.php?f=104&t=111457)
+        Per qusto motivo è necessario fare una stima della temperatura
+        reale tenendo presente la temperatura della CPU. La Pi Foundation
+        raccomanda il seguente metodo:
+        http://yaab-arduino.blogspot.co.uk/2016/08/accurate-temperature-reading-sensehat.html
+        """
+        # Leggiamo la temperatura da entrambi i sensori
+        temp1 = self.sense.get_temperature_from_humidity()
+        temp2 = self.sense.get_temperature_from_pressure()
+        # Facciamo la media delle due temperature lette
+        avg_temp = (temp1 + temp2) / 2
+        # Leggiamo la temperatura della CPU
+        cpu_temp = self.get_cpu_temp()
+        # Facciamo una stima della temperatura corrente compensando
+        # l'influenza della CPU su questo dato
+        corr_temp = avg_temp - ((cpu_temp - avg_temp) / 1.5)
+        # ritorniamo la media delle ultime 3 temperature lette
+        return self.get_smooth(corr_temp)
+
+    def take_picture(self):
+        """
+        Scatta un immagine dalla webcam
+        utilizzando fswebcam (https://github.com/fsphil/fswebcam)
+        """
+        resolution = Config.PICTURE_RESOLUTION
+
+        # Comando per lo scatto di un immagine
+        cmd = "fswebcam -r %s ./pictures/latest.jpg"%(resolution)
+        # Eseguo il comando
+        os.system(cmd)
+
+        # Se è impostata la configurazione prevede il salvataggio
+        # di tutte le foto scattate dalla webcam...
+        if Config.PRESERVE_OLD_PICTURES:
+            # ...creo una copia della foto appena scattata
+            filename = datetime.now().strftime('%Y-%m-%dT%H:%M:%S.jpg')
+            cmd = "cp ./pictures/latest.jpg %s%s"%(Config.OLD_PICTURES_PATH, filename)
+
+    def upload_picture(self):
+        self.latest_picture_upload = datetime.now()
+        ftp = FTP(Config.FTP_SERVER, Config.FTP_LOGIN, Config.FTP_PASSWORD) # Si connette
+
+        # Imposta il file da inviare, apriamo uno stream per il file
+        with open('./pictures/latest.jpg', 'rb') as fp:
+            #di default siamo nella cartella root del sito / -
+            # se vogliamo spostarci in un'altra directory è sufficiente scrivere:
+            # ftp.cwd('directory')
+            ftp.storbinary('STOR image.jpg', fp) # Invia il file
+            fp.close() # Chiude lo stream del file
+            ftp.quit() # Chiude la connessione
+
+    def collect_data(self):
+        """
+        Legge dal Sense HAT temperatura, umidità e pressione
+        """
+        calc_temp = self.get_temp()
+        # Arrotonda il valore della temperatura
+        self.temp = round(calc_temp, 1)
+        self.humidity = round(self.sense.get_humidity(), 0)
+        # converte la pressione da millibar a inHg
+        self.pressure = round(self.sense.get_pressure() * 0.0295300, 1)
+        # Aggiorno il record per l'ultimo dato registrato
+        self.latest_data_collection = datetime.now()
+
+
+    def upload_data(self):
+        self.latest_data_upload = datetime.now()
+        """
+        Invia i dati raccolti a Undeground weather
+        """
+        weather_data = {
+            "action": "updateraw",
+            "ID": Config.STATION_ID,
+            "PASSWORD": Config.STATION_KEY,
+            "dateutc": "now",
+            "tempf": str(self.temp),
+            "humidity": str(self.humidity),
+            "baromin": str(self.pressure),
+        }
+
+        try:
+            upload_url = self.WU_URL + "?" + urlencode(weather_data)
+            response = urllib2.urlopen(upload_url)
+            html = response.read()
+            print("Server response:", html)
+            response.close()
+            
+        except Exception as e:
+            print("Exception:", sys.exc_info()[0])
+
+    def run(self):
+        
+        while True:
+            now = datetime.now()
+            # SE non ho mai raccolto dati OPPURE se è scaduto l'intervallo di misurazione
+            # ALLORA leggi i dati dai sensori
+            if self.latest_data_collection is None or \
+            (now - self.latest_data_collection) > timedelta(minutes=Config.MEASUREMENT_INTERVAL):
+                self.collect_data()
+                print("Temp: (%sC), Pressure: %s inHg, Humidity: %s%%"%\
+                (self.temp, self.pressure, self.humidity))
+            # SE non ho mai inviato dati al sito OPPURE li ho inviati troppo tempo fa
+            # ALLORA invia i dati
+            if Config.WEATHER_UPLOAD and \
+            (self.latest_data_upload is None or \
+            (now - self.latest_data_upload) > timedelta(minutes=Config.DATA_UPLOAD_INTERVAL)):
+                upload_data_thread = Thread(target=self.upload_data)
+                upload_data_thread.daemon = True
+                upload_data_thread.start()
+
+
+            # SE la webcam è abilitata e non ho mai inviato immagini al sito OPPURE le ho inviate troppo tempo fa
+            # ALLORA invia l'immagine
+            if Config.WEBCAM_ENABLED and \
+            (self.latest_picture_upload is None or \
+            (now - self.latest_picture_upload) > timedelta(minutes=Config.PICTURE_UPLOAD_INTERVAL)):
+                self.take_picture()
+                upload_picture_thread = Thread(target=self.upload_picture)
+                upload_picture_thread.daemon = True
+                upload_picture_thread.start()
+                self.upload_picture()
+
+            time.sleep(1)
+
+
 if __name__ == "__main__":
     try:
-        main()
+        ws = WeatherStation()
+        ws.run()
     except KeyboardInterrupt:
         print("\nExiting application\n")
         sys.exit(0)
