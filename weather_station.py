@@ -14,6 +14,8 @@ import time
 from datetime import datetime, timedelta
 import os
 import sys
+import json
+import requests
 from urllib import urlencode
 from ftplib import FTP
 from threading import Thread
@@ -22,7 +24,17 @@ import urllib2
 from sense_hat import SenseHat, ACTION_PRESSED
 
 from config import Config
-
+from icons import Icon
+class Icon:
+    CLOUDY_NIGHT = "./icons/cloudynight.png"
+    MOON = "./icons/moon.png"
+    SNOW = "./icons/snow.png"
+    CLOUDY_SUN = "./icons/cloudysun.png"
+    RAIN = "./icons/rain.png"
+    SUN = "./icons/sun.png"
+    FOG = "./icons/fog.png"
+    SLEET = "./icons/sleet.png"
+    WIND = "./icons/wind.png"
 
 class WeatherStation(object):
     '''
@@ -31,7 +43,7 @@ class WeatherStation(object):
 
     # URL Weather Underground usato per caricare i dati
     WU_URL = "http://weatherstation.wunderground.com/weatherstation/updateweatherstation.php"
-
+    WP_API_ENDPOINT = "http://api.wunderground.com/api/{api_key}/forecast/q/pws:{station_id}.json"
     #Contiene le ultime 3 temperature lette
     last3_temperatures = []
 
@@ -44,8 +56,10 @@ class WeatherStation(object):
     latest_data_collection = None
     latest_data_upload = None
     latest_picture_upload = None
+    latest_icon_update = None
 
     sense = SenseHat()
+    forecast_icon = Icon.SUN
 
     def __init__(self):
         """
@@ -165,6 +179,28 @@ class WeatherStation(object):
         self.latest_data_collection = datetime.now()
 
 
+    def update_forecast_icon(self):
+        url = self.WP_API_ENDPOINT.format(api_key=Config.API_KEY, station_id=Config.STATION_ID)
+        response = requests.get(url)
+        json_data = json.loads(response.text)
+        icon_name = json_data["forecast"]["simpleforecast"]["forecastday"][0]["icon"]
+
+        if any(word in icon_name for word in ("flurries", "snow")):
+            forecast_icon = Icon.SNOW
+        elif any(word in icon_name for word in ("rain", "storm")):
+            forecast_icon = Icon.RAIN
+        elif any(word in icon_name for word in ("cloudy", "hazy", "mostlycloud", "partlysunny")):
+            forecast_icon = Icon.CLOUDY_NIGHT if "nt_" in icon_name else Icon.CLOUDY_SUN
+        elif any(word in icon_name for word in ("clear", "sunny")):
+            forecast_icon = Icon.MOON if "nt_" in icon_name else Icon.SUN
+        elif "sleet" in icon_name:
+            forecast_icon = Icon.SLEET
+        elif "fog" in icon_name:
+            forecast_icon = Icon.FOG
+        else:
+            forecast_icon = Icon.SUN
+        self.sense.load_image(forecast_icon)
+
     def upload_data(self):
         self.latest_data_upload = datetime.now()
         """
@@ -186,12 +222,13 @@ class WeatherStation(object):
             html = response.read()
             print("Server response:", html)
             response.close()
-            
         except Exception as e:
             print("Exception:", sys.exc_info()[0])
 
     def run(self):
-        
+        """
+        Aggiorna ciclicamente i dati
+        """
         while True:
             now = datetime.now()
             # SE non ho mai raccolto dati OPPURE se è scaduto l'intervallo di misurazione
@@ -199,26 +236,32 @@ class WeatherStation(object):
             if self.latest_data_collection is None or \
             (now - self.latest_data_collection) > timedelta(minutes=Config.MEASUREMENT_INTERVAL):
                 self.collect_data()
-                print("Temp: (%sC), Pressure: %s inHg, Humidity: %s%%"%\
-                (self.temp, self.pressure, self.humidity))
+                print "Temp: (%sC), Pressure: %s inHg, Humidity: %s%%"% \
+                (self.temp, self.pressure, self.humidity)
+            
+            # SE non ho mai aggiornato l'icona sul display
+            # OPPURE l'ho aggiornata troppo tempo fa
+            # ALLORA aggiorna l'icona
+            if self.latest_icon_update is None or \
+            (now - self.latest_icon_update) > timedelta(minutes=Config.ICON_UPDATE_INTERVAL):
+                Thread(target=self.update_forecast_icon).start()
+
             # SE non ho mai inviato dati al sito OPPURE li ho inviati troppo tempo fa
             # ALLORA invia i dati
             if Config.WEATHER_UPLOAD and \
             (self.latest_data_upload is None or \
             (now - self.latest_data_upload) > timedelta(minutes=Config.DATA_UPLOAD_INTERVAL)):
                 upload_data_thread = Thread(target=self.upload_data)
-                upload_data_thread.daemon = True
                 upload_data_thread.start()
 
-
-            # SE la webcam è abilitata e non ho mai inviato immagini al sito OPPURE le ho inviate troppo tempo fa
+            # SE la webcam è abilitata e non ho mai inviato immagini al sito
+            # OPPURE le ho inviate troppo tempo fa
             # ALLORA invia l'immagine
             if Config.WEBCAM_ENABLED and \
             (self.latest_picture_upload is None or \
             (now - self.latest_picture_upload) > timedelta(minutes=Config.PICTURE_UPLOAD_INTERVAL)):
                 self.take_picture()
                 upload_picture_thread = Thread(target=self.upload_picture)
-                upload_picture_thread.daemon = True
                 upload_picture_thread.start()
                 self.upload_picture()
 
