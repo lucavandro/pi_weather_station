@@ -15,26 +15,18 @@ from datetime import datetime, timedelta
 import os
 import sys
 import json
-import requests
+
 from urllib import urlencode
+import urllib2
 from ftplib import FTP
 from threading import Thread
+import requests
 
-import urllib2
 from sense_hat import SenseHat, ACTION_PRESSED
 
 from config import Config
 from icons import Icon
-class Icon:
-    CLOUDY_NIGHT = "./icons/cloudynight.png"
-    MOON = "./icons/moon.png"
-    SNOW = "./icons/snow.png"
-    CLOUDY_SUN = "./icons/cloudysun.png"
-    RAIN = "./icons/rain.png"
-    SUN = "./icons/sun.png"
-    FOG = "./icons/fog.png"
-    SLEET = "./icons/sleet.png"
-    WIND = "./icons/wind.png"
+
 
 class WeatherStation(object):
     '''
