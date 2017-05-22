@@ -283,9 +283,10 @@ class WeatherStation(object):
             if self.latest_data_collection is None or \
             (now - self.latest_data_collection) > timedelta(minutes=Config.MEASUREMENT_INTERVAL):
                 self.collect_data()
-                message = "Temp: (%sC), Pressure: %s inHg, Humidity: %s%%"% (self.temp, self.pressure, self.humidity)
-                print message
-                logging.info(message)
+
+            message = "Temp: (%sC), Pressure: %s inHg, Humidity: %s%%"%(self.temp, self.pressure, self.humidity)
+            print message
+            logging.info(message)
 
             if self.is_connected:
                 # SE non ho mai aggiornato l'icona sul display
@@ -293,7 +294,7 @@ class WeatherStation(object):
                 # ALLORA aggiorna l'icona
                 if self.latest_icon_update is None or \
                 (now - self.latest_icon_update) > timedelta(minutes=Config.ICON_UPDATE_INTERVAL):
-                    if self.threads['update_forecast_icon'] is None or \
+                    if not self.threads.has_key('update_forecast_icon') is None or \
                     not self.threads['update_forecast_icon'].isAlive():
                         self.threads['update_forecast_icon'] = Thread(target=self.update_forecast_icon)
                         self.threads['update_forecast_icon'].start()
@@ -303,7 +304,7 @@ class WeatherStation(object):
                 if Config.WEATHER_UPLOAD and \
                 (self.latest_data_upload is None or \
                 (now - self.latest_data_upload) > timedelta(minutes=Config.DATA_UPLOAD_INTERVAL)):
-                    if self.threads['upload_data'] is None or \
+                    if not self.threads.has_key('upload_data') is None or \
                     not self.threads['upload_data'].isAlive():
                         self.threads['upload_data'] = Thread(target=self.upload_data)
                         self.threads['upload_data'].start()
@@ -314,7 +315,7 @@ class WeatherStation(object):
                 if Config.WEBCAM_ENABLED and \
                 (self.latest_picture_upload is None or \
                 (now - self.latest_picture_upload) > timedelta(minutes=Config.PICTURE_UPLOAD_INTERVAL)):
-                    if self.threads['upload_picture'] is None or \
+                    if not self.threads.has_key('upload_picture') is None or \
                     not self.threads['upload_picture'].isAlive():
                         self.take_picture()
                         self.threads['upload_picture'] = Thread(target=self.upload_picture)
