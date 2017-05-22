@@ -165,7 +165,7 @@ class WeatherStation(object):
         resolution = Config.PICTURE_RESOLUTION
 
         # Comando per lo scatto di un immagine
-        cmd = "fswebcam -r %s %s/pictures/latest.jpg> /dev/null 2>&1"%(resolution, Config.BASE_DIR)
+        cmd = "fswebcam -r %s %s/pictures/latest.jpg > /dev/null 2>&1"%(resolution, Config.BASE_DIR)
         print "Acquisita nuova foto"
         # Eseguo il comando
         result = os.system(cmd)
@@ -185,7 +185,7 @@ class WeatherStation(object):
         Invia un immagine scattata dalla webcam tramite FTP
         """
         self.latest_picture_upload = datetime.now()
-        ftp = FTP(Config.FTP_SERVER, Config.FTP_LOGIN, Config.FTP_PASSWORD) # Si connette
+        ftp = FTP(Config.FTP_SERVER, Config.FTP_LOGIN, Config.FTP_PASSWORD, timeout=60) # Si connette
         try:
             # Imposta il file da inviare, apriamo uno stream per il file
             with open(Config.BASE_DIR + '/pictures/latest.jpg', 'rb') as webcam_picture:
@@ -220,24 +220,28 @@ class WeatherStation(object):
         url = self.WP_API_ENDPOINT.format(api_key=Config.API_KEY, station_id=Config.STATION_ID)
         response = requests.get(url)
         json_data = json.loads(response.text)
-        icon_name = json_data["forecast"]["simpleforecast"]["forecastday"][0]["icon"]
+        try:
+            icon_name = json_data["forecast"]["simpleforecast"]["forecastday"][0]["icon"]
+            print "Impostata icona ", icon_name
+            if any(word in icon_name for word in ("flurries", "snow")):
+                forecast_icon = Icon.SNOW
+            elif any(word in icon_name for word in ("rain", "storm")):
+                forecast_icon = Icon.RAIN
+            elif any(word in icon_name for word in ("cloudy", "hazy", "mostlycloud", "partlysunny")):
+                forecast_icon = Icon.CLOUDY_NIGHT if "nt_" in icon_name else Icon.CLOUDY_SUN
+            elif any(word in icon_name for word in ("clear", "sunny")):
+                forecast_icon = Icon.MOON if "nt_" in icon_name else Icon.SUN
+            elif "sleet" in icon_name:
+                forecast_icon = Icon.SLEET
+            elif "fog" in icon_name:
+                forecast_icon = Icon.FOG
+            else:
+                forecast_icon = Icon.SUN
+            self.forecast_icon = forecast_icon
+            self.sense.load_image(forecast_icon)
+        except KeyError as error:
+            logging.error("Key error: " + response.text)
 
-        if any(word in icon_name for word in ("flurries", "snow")):
-            forecast_icon = Icon.SNOW
-        elif any(word in icon_name for word in ("rain", "storm")):
-            forecast_icon = Icon.RAIN
-        elif any(word in icon_name for word in ("cloudy", "hazy", "mostlycloud", "partlysunny")):
-            forecast_icon = Icon.CLOUDY_NIGHT if "nt_" in icon_name else Icon.CLOUDY_SUN
-        elif any(word in icon_name for word in ("clear", "sunny")):
-            forecast_icon = Icon.MOON if "nt_" in icon_name else Icon.SUN
-        elif "sleet" in icon_name:
-            forecast_icon = Icon.SLEET
-        elif "fog" in icon_name:
-            forecast_icon = Icon.FOG
-        else:
-            forecast_icon = Icon.SUN
-        self.forecast_icon = forecast_icon
-        self.sense.load_image(forecast_icon)
 
     def upload_data(self):
         """
@@ -342,6 +346,7 @@ class WeatherStation(object):
                 if Config.WEBCAM_ENABLED and \
                 (self.latest_picture_upload is None or \
                 (now - self.latest_picture_upload) > timedelta(minutes=Config.PICTURE_UPLOAD_INTERVAL)):
+                    self.take_picture()
                     if not self.threads.has_key('upload_picture') is None:
                         self.threads['upload_picture'] = Thread(target=self.upload_picture)
 
