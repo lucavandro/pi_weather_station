@@ -175,6 +175,7 @@ class WeatherStation(object):
             # ...creo una copia della foto appena scattata
             filename = datetime.now().strftime('%Y-%m-%dT%H:%M:%S.jpg')
             cmd = "cp ./pictures/latest.jpg %s%s"%(Config.OLD_PICTURES_PATH, filename)
+            os.system(cmd)
 
     def upload_picture(self):
         """
