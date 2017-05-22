@@ -164,7 +164,8 @@ class WeatherStation(object):
         resolution = Config.PICTURE_RESOLUTION
 
         # Comando per lo scatto di un immagine
-        cmd = "fswebcam -r %s ./pictures/latest.jpg"%(resolution)
+        cmd = "fswebcam -r %s ./pictures/latest.jpg > /dev/null"%(resolution)
+        print "Acquisita nuova foto"
         # Eseguo il comando
         os.system(cmd)
 
