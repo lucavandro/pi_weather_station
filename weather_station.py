@@ -263,7 +263,7 @@ class WeatherStation(object):
         except Exception as e:
             logging.error(e, exc_info=True)
 
-    def check_connection(self, host="8.8.8.8", port=53, timeout=1):
+    def check_connection(self, host="8.8.8.8", port=53, timeout=5):
         """
         Controllo della connessione con ping al DNS di google
         Host: 8.8.8.8 (google-public-dns-a.google.com)
