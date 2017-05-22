@@ -110,6 +110,7 @@ class WeatherStation(object):
         """
         return (input_temp * 1.8) + 32
 
+
     def get_cpu_temp(self):
         """
         'Preso in prestito' da https://www.raspberrypi.org/forums/viewtopic.php?f=104&t=111457
@@ -117,7 +118,7 @@ class WeatherStation(object):
         """
         res = os.popen('vcgencmd measure_temp').readline()
         return float(res.replace("temp=", "").replace("'C\n", ""))
-    
+
     def get_smooth(self, temp):
         """
         Calcola la media delle ultime 3 temperature lette
@@ -164,10 +165,12 @@ class WeatherStation(object):
         resolution = Config.PICTURE_RESOLUTION
 
         # Comando per lo scatto di un immagine
-        cmd = "fswebcam -r %s ./pictures/latest.jpg > /dev/null"%(resolution)
+        cmd = "fswebcam -r %s ./pictures/latest.jpg> /dev/null 2>&1"%(resolution)
         print "Acquisita nuova foto"
         # Eseguo il comando
-        os.system(cmd)
+        result = os.system(cmd)
+        if result != 0:
+            logging.error("Error while taking picture. Error n. " + result)
 
         # Se è impostata la configurazione prevede il salvataggio
         # di tutte le foto scattate dalla webcam...
@@ -196,8 +199,6 @@ class WeatherStation(object):
             logging.error(e, exc_info=True)
 
 
-    
-    
     def collect_data(self):
         """
         Legge dal Sense HAT temperatura, umidità e pressione
@@ -235,6 +236,7 @@ class WeatherStation(object):
             forecast_icon = Icon.FOG
         else:
             forecast_icon = Icon.SUN
+        self.forecast_icon = forecast_icon
         self.sense.load_image(forecast_icon)
 
     def upload_data(self):
@@ -259,7 +261,7 @@ class WeatherStation(object):
             else:
                 logging.error(response.text)
         except Exception as e:
-            logging.error("Exception:" + sys.exc_info()[0])
+            logging.error(e, exc_info=True)
 
     def check_connection(self, host="8.8.8.8", port=53, timeout=1):
         """
@@ -278,6 +280,22 @@ class WeatherStation(object):
 
             time.sleep(60)
 
+    def print_data(self):
+        """
+        Stampa i dati nel terminale, nel file di log e sullo schermo
+        """
+        message = "Temp: %s°C, Pressione: %s mbar, Umidità: %s%%"%(
+            self.temp,
+            self.pressure,
+            self.humidity
+        )
+        print message
+        logging.info(message)
+        self.sense.show_message(
+            message
+        )
+        self.sense.load_image(self.forecast_icon)
+
     def run(self):
         """
         Aggiorna ciclicamente i dati
@@ -289,10 +307,8 @@ class WeatherStation(object):
             if self.latest_data_collection is None or \
             (now - self.latest_data_collection) > timedelta(minutes=Config.MEASUREMENT_INTERVAL):
                 self.collect_data()
+                self.print_data()
 
-            message = "Temp: (%sC), Pressure: %s inHg, Humidity: %s%%"%(self.temp, self.pressure, self.humidity)
-            print message
-            logging.info(message)
 
             if self.is_connected:
                 # SE non ho mai aggiornato l'icona sul display
@@ -300,20 +316,22 @@ class WeatherStation(object):
                 # ALLORA aggiorna l'icona
                 if self.latest_icon_update is None or \
                 (now - self.latest_icon_update) > timedelta(minutes=Config.ICON_UPDATE_INTERVAL):
-                    if not self.threads.has_key('update_forecast_icon') is None or \
-                    not self.threads['update_forecast_icon'].isAlive():
+                    if not self.threads.has_key('update_forecast_icon') is None:
                         self.threads['update_forecast_icon'] = Thread(target=self.update_forecast_icon)
-                        self.threads['update_forecast_icon'].start()
+
+                        if not self.threads['update_forecast_icon'].isAlive():
+                            self.threads['update_forecast_icon'].start()
 
                 # SE non ho mai inviato dati al sito OPPURE li ho inviati troppo tempo fa
                 # ALLORA invia i dati
                 if Config.WEATHER_UPLOAD and \
                 (self.latest_data_upload is None or \
                 (now - self.latest_data_upload) > timedelta(minutes=Config.DATA_UPLOAD_INTERVAL)):
-                    if not self.threads.has_key('upload_data') is None or \
-                    not self.threads['upload_data'].isAlive():
+                    if not self.threads.has_key('upload_data') is None:
                         self.threads['upload_data'] = Thread(target=self.upload_data)
-                        self.threads['upload_data'].start()
+
+                        if not self.threads['upload_data'].isAlive():
+                            self.threads['upload_data'].start()
 
                 # SE la webcam è abilitata e non ho mai inviato immagini al sito
                 # OPPURE le ho inviate troppo tempo fa
@@ -321,11 +339,11 @@ class WeatherStation(object):
                 if Config.WEBCAM_ENABLED and \
                 (self.latest_picture_upload is None or \
                 (now - self.latest_picture_upload) > timedelta(minutes=Config.PICTURE_UPLOAD_INTERVAL)):
-                    if not self.threads.has_key('upload_picture') is None or \
-                    not self.threads['upload_picture'].isAlive():
-                        self.take_picture()
+                    if not self.threads.has_key('upload_picture') is None:
                         self.threads['upload_picture'] = Thread(target=self.upload_picture)
-                        self.threads['upload_picture'].start()
+
+                        if not self.threads['upload_picture'].isAlive():
+                            self.threads['upload_picture'].start()
             else:
                 self.sense.show_message(
                     "Connessione internet assente",
