@@ -11,11 +11,12 @@
 '''
 
 import time
+import logging
 from datetime import datetime, timedelta
 import os
 import sys
 import json
-
+import socket
 from urllib import urlencode
 import urllib2
 from ftplib import FTP
@@ -53,10 +54,19 @@ class WeatherStation(object):
     sense = SenseHat()
     forecast_icon = Icon.SUN
 
+    is_connected = False
+
     def __init__(self):
         """
         Effettua il setup della stazione all'avvio
         """
+        logging.basicConfig(
+            filename='station.log',
+            level=logging.INFO,
+            format='%(asctime)s %(message)s')
+
+        logging.info("Station started")
+
         # Visualizza il messaggio di benvenuto
         self.sense.show_message(
             Config.WELCOME_MESSAGE,
@@ -66,8 +76,13 @@ class WeatherStation(object):
         # Gestisce l'input proveniente dal joystick
         Thread(target=self.joystick_handler).start()
 
+        # Avvia il controllo ciclico della connessione ad internet
+        Thread(target=self.check_connection).start()
+
         # Resetta lo schermo
         self.sense.clear()
+
+        # Raccoglie i dati
         self.collect_data()
 
     def joystick_handler(self):
@@ -145,16 +160,19 @@ class WeatherStation(object):
             cmd = "cp ./pictures/latest.jpg %s%s"%(Config.OLD_PICTURES_PATH, filename)
 
     def upload_picture(self):
+        """
+        Invia un immagine scattata dalla webcam tramite FTP
+        """
         self.latest_picture_upload = datetime.now()
         ftp = FTP(Config.FTP_SERVER, Config.FTP_LOGIN, Config.FTP_PASSWORD) # Si connette
 
         # Imposta il file da inviare, apriamo uno stream per il file
-        with open('./pictures/latest.jpg', 'rb') as fp:
+        with open('./pictures/latest.jpg', 'rb') as webcam_picture:
             #di default siamo nella cartella root del sito / -
             # se vogliamo spostarci in un'altra directory è sufficiente scrivere:
             # ftp.cwd('directory')
-            ftp.storbinary('STOR image.jpg', fp) # Invia il file
-            fp.close() # Chiude lo stream del file
+            ftp.storbinary('STOR image.jpg', webcam_picture) # Invia il file
+            webcam_picture.close() # Chiude lo stream del file
             ftp.quit() # Chiude la connessione
 
     def collect_data(self):
@@ -172,6 +190,9 @@ class WeatherStation(object):
 
 
     def update_forecast_icon(self):
+        """
+        Aggiorna l'icona mostrata sul display
+        """
         url = self.WP_API_ENDPOINT.format(api_key=Config.API_KEY, station_id=Config.STATION_ID)
         response = requests.get(url)
         json_data = json.loads(response.text)
@@ -194,10 +215,10 @@ class WeatherStation(object):
         self.sense.load_image(forecast_icon)
 
     def upload_data(self):
-        self.latest_data_upload = datetime.now()
         """
         Invia i dati raccolti a Undeground weather
         """
+        self.latest_data_upload = datetime.now()
         weather_data = {
             "action": "updateraw",
             "ID": Config.STATION_ID,
@@ -216,6 +237,24 @@ class WeatherStation(object):
             response.close()
         except Exception as e:
             print("Exception:", sys.exc_info()[0])
+            logging.error("Exception:" + sys.exc_info()[0])
+
+    def check_connection(self, host="8.8.8.8", port=53, timeout=1):
+        """
+        Controllo della connessione con ping al DNS di google
+        Host: 8.8.8.8 (google-public-dns-a.google.com)
+        OpenPort: 53/tcp
+        Service: domain (DNS/TCP)
+        """
+        while True:
+            try:
+                socket.setdefaulttimeout(timeout)
+                socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect((host, port))
+                self.is_connected = True
+            except Exception:
+                self.is_connected = False
+
+            time.sleep(60)
 
     def run(self):
         """
@@ -228,34 +267,43 @@ class WeatherStation(object):
             if self.latest_data_collection is None or \
             (now - self.latest_data_collection) > timedelta(minutes=Config.MEASUREMENT_INTERVAL):
                 self.collect_data()
-                print "Temp: (%sC), Pressure: %s inHg, Humidity: %s%%"% \
+                message = "Temp: (%sC), Pressure: %s inHg, Humidity: %s%%"% \
                 (self.temp, self.pressure, self.humidity)
-            
-            # SE non ho mai aggiornato l'icona sul display
-            # OPPURE l'ho aggiornata troppo tempo fa
-            # ALLORA aggiorna l'icona
-            if self.latest_icon_update is None or \
-            (now - self.latest_icon_update) > timedelta(minutes=Config.ICON_UPDATE_INTERVAL):
-                Thread(target=self.update_forecast_icon).start()
+                print message
+                logging.info(message)
 
-            # SE non ho mai inviato dati al sito OPPURE li ho inviati troppo tempo fa
-            # ALLORA invia i dati
-            if Config.WEATHER_UPLOAD and \
-            (self.latest_data_upload is None or \
-            (now - self.latest_data_upload) > timedelta(minutes=Config.DATA_UPLOAD_INTERVAL)):
-                upload_data_thread = Thread(target=self.upload_data)
-                upload_data_thread.start()
+            if self.is_connected:
+                # SE non ho mai aggiornato l'icona sul display
+                # OPPURE l'ho aggiornata troppo tempo fa
+                # ALLORA aggiorna l'icona
+                if self.latest_icon_update is None or \
+                (now - self.latest_icon_update) > timedelta(minutes=Config.ICON_UPDATE_INTERVAL):
+                    Thread(target=self.update_forecast_icon).start()
 
-            # SE la webcam è abilitata e non ho mai inviato immagini al sito
-            # OPPURE le ho inviate troppo tempo fa
-            # ALLORA invia l'immagine
-            if Config.WEBCAM_ENABLED and \
-            (self.latest_picture_upload is None or \
-            (now - self.latest_picture_upload) > timedelta(minutes=Config.PICTURE_UPLOAD_INTERVAL)):
-                self.take_picture()
-                upload_picture_thread = Thread(target=self.upload_picture)
-                upload_picture_thread.start()
-                self.upload_picture()
+                # SE non ho mai inviato dati al sito OPPURE li ho inviati troppo tempo fa
+                # ALLORA invia i dati
+                if Config.WEATHER_UPLOAD and \
+                (self.latest_data_upload is None or \
+                (now - self.latest_data_upload) > timedelta(minutes=Config.DATA_UPLOAD_INTERVAL)):
+                    upload_data_thread = Thread(target=self.upload_data)
+                    upload_data_thread.start()
+
+                # SE la webcam è abilitata e non ho mai inviato immagini al sito
+                # OPPURE le ho inviate troppo tempo fa
+                # ALLORA invia l'immagine
+                if Config.WEBCAM_ENABLED and \
+                (self.latest_picture_upload is None or \
+                (now - self.latest_picture_upload) > timedelta(minutes=Config.PICTURE_UPLOAD_INTERVAL)):
+                    self.take_picture()
+                    upload_picture_thread = Thread(target=self.upload_picture)
+                    upload_picture_thread.start()
+                    self.upload_picture()
+            else:
+                self.sense.show_message(
+                    "Connessione internet assente",
+                    text_colour=[255, 0, 0],
+                    back_colour=[0, 0, 255]
+                )
 
             time.sleep(1)
 
@@ -265,5 +313,6 @@ if __name__ == "__main__":
         ws = WeatherStation()
         ws.run()
     except KeyboardInterrupt:
-        print("\nExiting application\n")
+        print "\nExiting application\n"
+        logging.info("Exiting application")
         sys.exit(0)
