@@ -275,8 +275,9 @@ class WeatherStation(object):
                 socket.setdefaulttimeout(timeout)
                 socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect((host, port))
                 self.is_connected = True
-            except Exception:
+            except Exception, e:
                 self.is_connected = False
+                logging.error(e, exc_info=True)
 
             if self.is_connected:
                 time.sleep(60)
