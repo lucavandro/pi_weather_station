@@ -17,8 +17,6 @@ import os
 import sys
 import json
 import socket
-from urllib import urlencode
-import urllib2
 from ftplib import FTP
 from threading import Thread
 import requests
@@ -105,6 +103,13 @@ class WeatherStation(object):
             if event.action == ACTION_PRESSED:
                 self.sense.rotation = (self.sense.rotation + 90) % 360
 
+
+    def c_to_f(self, input_temp):
+        """
+        Converte la temperatura dal Celsius a Fahrenheit
+        """
+        return (input_temp * 1.8) + 32
+
     def get_cpu_temp(self):
         """
         'Preso in prestito' da https://www.raspberrypi.org/forums/viewtopic.php?f=104&t=111457
@@ -112,7 +117,7 @@ class WeatherStation(object):
         """
         res = os.popen('vcgencmd measure_temp').readline()
         return float(res.replace("temp=", "").replace("'C\n", ""))
-
+    
     def get_smooth(self, temp):
         """
         Calcola la media delle ultime 3 temperature lette
@@ -240,19 +245,18 @@ class WeatherStation(object):
             "ID": Config.STATION_ID,
             "PASSWORD": Config.STATION_KEY,
             "dateutc": "now",
-            "tempf": str(self.temp),
+            "tempf": str(self.c_to_f(self.temp)),
             "humidity": str(self.humidity),
             "baromin": str(self.pressure),
         }
 
         try:
-            upload_url = self.WU_URL + "?" + urlencode(weather_data)
-            response = urllib2.urlopen(upload_url)
-            html = response.read()
-            print("Server response:", html)
-            response.close()
+            response = requests.get(self.WU_URL, params=weather_data)
+            if response.text == "success":
+                logging.info("Data uploaded successfully")
+            else:
+                logging.error(response.text)
         except Exception as e:
-            print("Exception:", sys.exc_info()[0])
             logging.error("Exception:" + sys.exc_info()[0])
 
     def check_connection(self, host="8.8.8.8", port=53, timeout=1):
