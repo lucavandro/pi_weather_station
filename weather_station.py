@@ -284,9 +284,10 @@ class WeatherStation(object):
         """
         Stampa i dati nel terminale, nel file di log e sullo schermo
         """
-        message = "Temp: %s°C, Pressione: %s mbar, Umidità: %s%%"%(
+
+        message = "Temp: %sC, Pressione: %shPa, Umidita': %s%%"%(
             self.temp,
-            self.pressure,
+            round(self.pressure * 33.86389), #Converto la pressione da inHg a hPa
             self.humidity
         )
         print message
