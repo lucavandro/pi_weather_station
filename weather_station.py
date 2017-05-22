@@ -165,7 +165,7 @@ class WeatherStation(object):
         resolution = Config.PICTURE_RESOLUTION
 
         # Comando per lo scatto di un immagine
-        cmd = "fswebcam -r %s ./pictures/latest.jpg> /dev/null 2>&1"%(resolution)
+        cmd = "fswebcam -r %s %s/pictures/latest.jpg> /dev/null 2>&1"%(resolution, Config.BASE_DIR)
         print "Acquisita nuova foto"
         # Eseguo il comando
         result = os.system(cmd)
@@ -177,7 +177,7 @@ class WeatherStation(object):
         if Config.PRESERVE_OLD_PICTURES:
             # ...creo una copia della foto appena scattata
             filename = datetime.now().strftime('%Y-%m-%dT%H:%M:%S.jpg')
-            cmd = "cp ./pictures/latest.jpg %s%s"%(Config.OLD_PICTURES_PATH, filename)
+            cmd = "cp {BASE_DIR}/pictures/latest.jpg {BASE_DIR}/pictures/{filename}".format(BASE_DIR = Config.BASE_DIR, filename = filename)
             os.system(cmd)
 
     def upload_picture(self):
@@ -188,7 +188,7 @@ class WeatherStation(object):
         ftp = FTP(Config.FTP_SERVER, Config.FTP_LOGIN, Config.FTP_PASSWORD) # Si connette
         try:
             # Imposta il file da inviare, apriamo uno stream per il file
-            with open('./pictures/latest.jpg', 'rb') as webcam_picture:
+            with open(Config.BASE_DIR + '/pictures/latest.jpg', 'rb') as webcam_picture:
                 #di default siamo nella cartella root del sito / -
                 # se vogliamo spostarci in un'altra directory è sufficiente scrivere:
                 # ftp.cwd('directory')

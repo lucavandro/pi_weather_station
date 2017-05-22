@@ -1,10 +1,10 @@
+import os
 class Config:
     # Weather Underground
     STATION_ID = ""
     STATION_KEY = ""
     PICTURE_RESOLUTION = "1280x720"
     PRESERVE_OLD_PICTURES = True
-    OLD_PICTURES_PATH = "./pictures/"
     MEASUREMENT_INTERVAL = 1  # In minuti
     DATA_UPLOAD_INTERVAL = 5  # In minuti
     PICTURE_UPLOAD_INTERVAL = 5 # In minuti
@@ -16,4 +16,5 @@ class Config:
     FTP_LOGIN = "WU_9120162CAM1"
     FTP_PASSWORD = ""
     API_KEY = ""
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
