@@ -277,8 +277,9 @@ class WeatherStation(object):
                 self.is_connected = True
             except Exception:
                 self.is_connected = False
-
-            time.sleep(60)
+            
+            if self.is_connected:
+                time.sleep(60)
 
     def print_data(self):
         """
