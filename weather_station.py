@@ -342,9 +342,12 @@ class WeatherStation(object):
             )
 
     def stop(self):
+        """
+        Termina tutti i thread aperti
+        """
         print "Stopping station"
-        for thread, thread_name in enumerate(self.threads):
-            if thread.isAlive:
+        for thread_name, thread in self.threads.iteritems():
+            if thread.isAlive():
                 thread.join(1)
                 print "Thread", thread_name, "stopped."
         logging.info("Station stopped")
